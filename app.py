@@ -36,7 +36,7 @@ def read_and_save_file():
             file_path = tf.name
 
         with st.session_state["ingestion_spinner"], st.spinner(f"Ingesting {file.name}"):
-            st.session_state["assistant"].ingest(file_path)
+            st.session_state["assistant"].ingest(file_path, file.name)
         os.remove(file_path)
 
 

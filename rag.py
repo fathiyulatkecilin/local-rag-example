@@ -6,7 +6,8 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema.runnable import RunnablePassthrough
 from langchain.prompts import PromptTemplate
-from langchain.vectorstores.utils import filter_complex_metadata
+from langchain_community.vectorstores.utils import filter_complex_metadata
+import json
 
 
 class ChatPDF:
@@ -19,16 +20,15 @@ class ChatPDF:
         self.text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=100)
         self.prompt = PromptTemplate.from_template(
             """
-            <s> [INST] You are an assistant for question-answering tasks. Use the following pieces of retrieved context 
-            to answer the question. If you don't know the answer, just say that you don't know. Use three sentences
-             maximum and keep the answer concise. [/INST] </s> 
+            <s> [INST] You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. If you don't know the answer, just say that you don't know. Use three sentences maximum and keep the answer concise. [/INST] </s>  
             [INST] Question: {question} 
             Context: {context} 
             Answer: [/INST]
             """
         )
+        self.log_file = "query_logs.json"
 
-    def ingest(self, pdf_file_path: str):
+    def ingest(self, pdf_file_path: str, original_filename: str = None):
         docs = PyPDFLoader(file_path=pdf_file_path).load()
         chunks = self.text_splitter.split_documents(docs)
         chunks = filter_complex_metadata(chunks)
@@ -38,7 +38,7 @@ class ChatPDF:
             search_type="similarity_score_threshold",
             search_kwargs={
                 "k": 3,
-                "score_threshold": 0.5,
+                "score_threshold": 0.2,
             },
         )
 
@@ -46,12 +46,63 @@ class ChatPDF:
                       | self.prompt
                       | self.model
                       | StrOutputParser())
+        
+        # Log the PDF file path to the JSON log file
+        self._log_pdf_ingestion(pdf_file_path, original_filename)
 
     def ask(self, query: str):
         if not self.chain:
             return "Please, add a PDF document first."
 
-        return self.chain.invoke(query)
+        answer = self.chain.invoke(query)
+
+        self._log_query(query, answer)
+
+        return answer
+    
+    def _log_query(self, query, answer):
+        """Saves the query, answer, and similarity scores to a JSON log file."""
+        log_entry = {
+            "query": query,
+            "answer": answer,
+        }
+
+        # Read existing logs if the file exists
+        try:
+            with open(self.log_file, 'r') as file:
+                logs = json.load(file)
+        except FileNotFoundError:
+            logs = []
+
+        # Append the new log entry
+        logs.append(log_entry)
+
+        # Write the updated logs back to the file
+        with open(self.log_file, 'w') as file:
+            json.dump(logs, file, indent=4)
+
+    def _log_pdf_ingestion(self, pdf_file_path, original_filename):
+        """Logs the ingestion of a new PDF file to the JSON log file."""
+        log_entry = {
+            "ingested_pdf": pdf_file_path,
+            "original_filename": original_filename,
+            "retriever_k": self.retriever.search_kwargs["k"],
+            "retriever_score_threshold": self.retriever.search_kwargs["score_threshold"]
+        }
+
+        # Read existing logs if the file exists
+        try:
+            with open(self.log_file, 'r') as file:
+                logs = json.load(file)
+        except FileNotFoundError:
+            logs = []
+
+        # Append the new PDF log entry
+        logs.append(log_entry)
+
+        # Write the updated logs back to the file
+        with open(self.log_file, 'w') as file:
+            json.dump(logs, file, indent=4)
 
     def clear(self):
         self.vector_store = None
